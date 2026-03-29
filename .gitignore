@@ -1,0 +1,41 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data — too large for git
+data/
+era5_campania/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Environment
+.env
+*.nc
+*.tif
+*.geojson
+*.gpkg
+*.gdb/
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cst
+
+# OS
+.DS_Store
+Thumbs.db
+#
+CLAUDE.md
+CONTEXT.md
