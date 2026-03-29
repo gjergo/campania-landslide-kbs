@@ -1,7 +1,7 @@
 [project]
-name = "ischia-landslide-kbs"
+name = "campania-landslide-kbs"
 version = "0.1.0"
-description = "Add your description here"
+description = "a knowledge based system to guess where landslides are gonna happen"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
