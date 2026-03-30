@@ -32,6 +32,8 @@ __pycache__/
 *.dbf
 *.prj
 *.cst
+# sources
+sources/*.pdf
 
 # OS
 .DS_Store
