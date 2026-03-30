@@ -30,3 +30,9 @@ Trigila, A., Iadanza, C., et al. (2021).
 Dissesto idrogeologico in Italia: pericolosità e indicatori di rischio.
 ISPRA Rapporti 356/2021.
 https://www.isprambiente.gov.it/files2022/pubblicazioni/rapporti/rapporto_dissesto_idrogeologico_italia_ispra_356_2021_finale_web.pdf
+
+## Drainage effect on landslide risk 
+Corominas, J., et al. (2014). 
+Recommendations for the quantitative analysis of landslide risk. 
+Bulletin of Engineering Geology and the Environment, 73(2), 209-263.
+https://doi.org/10.1007/s10064-013-0538-8
