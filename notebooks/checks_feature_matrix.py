@@ -35,6 +35,12 @@ print(df[df["label"]==1].groupby("litho_class")["slope"].mean().rename(LITHO_LAB
 print("\nMean slope by litho_class (ALL pixels):")
 print(df.groupby("litho_class")["slope"].mean().rename(LITHO_LABELS).sort_values(ascending=False).round(2))
 
+# %% Pixel count of corine land cover
+print(df[df["corine"].isin([331,332,333,334])]["label"].value_counts())
+print(f"Bare/sparse pixels: {df['corine'].isin([331,332,333,334]).sum():,} out of {len(df):,}")
+print(f"{(df['corine'].isin([331,332,333,334]).sum()/len(df))*100}% of total data")
+
+
 # %% Pixel counts and landslide rate by litho_class
 print("Pixel count and landslide rate by litho_class:")
 print(df.groupby("litho_class")["label"].agg(["sum","count","mean"]).rename(

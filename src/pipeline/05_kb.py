@@ -1,13 +1,14 @@
 """
 05_kb.py – Apply Prolog KB inference to add kb_susceptibility column.
 
-For each unique (litho_class, slope_bin, dist_bin) combination in the feature
-matrix, queries susceptibility_score/4 from the Prolog KB and maps the result
-(0=low, 1=medium, 2=high) back to all matching rows via a join.
+For each unique (litho_class, slope_bin, dist_bin, corine) combination in the
+feature matrix, queries susceptibility_score/5 from the Prolog KB and maps the
+result (0=low, 1=medium, 2=high) back to all matching rows via a join.
 
 Slope is binned to 0.5° increments and dist_drainage to 50 m increments to
 keep the number of unique Prolog calls in the low thousands rather than the
-~6 M rows in the full matrix.
+~6 M rows in the full matrix.  CORINE codes are integer categoricals and are
+not binned.
 
 Output: outputs/features/feature_matrix.parquet (overwrite, adds kb_susceptibility)
 """
@@ -48,9 +49,10 @@ def query_kb(
     scores: list[int] = []
     for row in combos.itertuples(index=False):
         litho_name = litho_labels.get(int(row.litho_class), "unknown")
-        slope = float(row.slope_bin)
-        dist  = float(row.dist_bin)
-        query = f"susceptibility_score({litho_name}, {slope}, {dist}, Score)"
+        slope  = float(row.slope_bin)
+        dist   = float(row.dist_bin)
+        corine = int(row.corine)
+        query  = f"susceptibility_score({litho_name}, {slope}, {dist}, {corine}, Score)"
         result = next(prolog.query(query), None)
         scores.append(int(result["Score"]) if result is not None else 0)
 
@@ -83,11 +85,11 @@ def main() -> None:
     df["dist_bin"]  = (df["dist_drainage"] / DIST_BIN_SIZE).round() * DIST_BIN_SIZE
 
     combos = (
-        df[["litho_class", "slope_bin", "dist_bin"]]
+        df[["litho_class", "slope_bin", "dist_bin", "corine"]]
         .drop_duplicates()
         .reset_index(drop=True)
     )
-    print(f"  unique (litho, slope_bin, dist_bin) combos: {len(combos):,}")
+    print(f"  unique (litho, slope_bin, dist_bin, corine) combos: {len(combos):,}")
 
     print(f"Loading Prolog KB from {KB_PATH} …")
     prolog = Prolog()
@@ -98,8 +100,10 @@ def main() -> None:
     score_dist = combos["kb_susceptibility"].value_counts().sort_index()
     print(f"  score distribution across combos:\n{score_dist.to_string()}")
 
-    # Join scores back to main dataframe
-    df = df.merge(combos, on=["litho_class", "slope_bin", "dist_bin"], how="left")
+    # Join scores back to main dataframe (drop stale column if re-running)
+    if "kb_susceptibility" in df.columns:
+        df = df.drop(columns=["kb_susceptibility"])
+    df = df.merge(combos, on=["litho_class", "slope_bin", "dist_bin", "corine"], how="left")
     df["kb_susceptibility"] = df["kb_susceptibility"].fillna(0).astype(np.int8)
     df = df.drop(columns=["slope_bin", "dist_bin"])
 
