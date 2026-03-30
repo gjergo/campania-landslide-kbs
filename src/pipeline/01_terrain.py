@@ -1,11 +1,15 @@
 """
 01_terrain.py – DEM → slope, aspect, profile/planform curvature, TWI, flow accumulation.
-All outputs saved to outputs/rasters/ as GeoTIFFs in EPSG:32633, 30 m resolution.
+All outputs saved to outputs/terrain/ as GeoTIFFs in EPSG:32633, 30 m resolution.
 """
-from pathlib import Path
+import sys
 import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
+from scipy.ndimage import binary_dilation
 
 # pysheds 0.5 uses np.in1d which was removed in NumPy 2.0
 if not hasattr(np, "in1d"):
@@ -13,14 +17,16 @@ if not hasattr(np, "in1d"):
 
 import rasterio
 from rasterio.crs import CRS
-from rasterio.warp import calculate_default_transform, reproject, Resampling
+from rasterio.warp import calculate_default_transform, reproject, Resampling, transform_bounds
 from pysheds.grid import Grid
+from utils.raster_utils import campania_mask
 
 DEM_PATH = Path("data/copernicus-dem-30/output_hh.tif")
-OUT_DIR = Path("outputs/rasters")
+OUT_DIR = Path("outputs/terrain")
 TARGET_CRS = CRS.from_epsg(32633)
 TARGET_RES = 30  # metres
 NODATA = np.float32(-9999.0)
+CAMPANIA_BBOX_WGS84 = (13.8, 39.9, 15.8, 41.5)  # W, S, E, N
 
 
 # ---------------------------------------------------------------------------
@@ -28,11 +34,15 @@ NODATA = np.float32(-9999.0)
 # ---------------------------------------------------------------------------
 
 def reproject_dem() -> tuple[np.ndarray, dict]:
-    """Reproject source DEM to EPSG:32633 at 30 m. Returns (array, rasterio profile)."""
+    """Reproject source DEM to EPSG:32633 at 30 m, clipped to Campania bbox."""
     with rasterio.open(DEM_PATH) as src:
+        # Convert Campania WGS84 bbox into the source CRS before passing as clip bounds
+        src_bounds = transform_bounds("EPSG:4326", src.crs, *CAMPANIA_BBOX_WGS84)
         transform, width, height = calculate_default_transform(
             src.crs, TARGET_CRS, src.width, src.height,
-            *src.bounds, resolution=TARGET_RES,
+            left=src_bounds[0], bottom=src_bounds[1],
+            right=src_bounds[2], top=src_bounds[3],
+            resolution=TARGET_RES,
         )
         profile = src.profile.copy()
         profile.update(
@@ -112,7 +122,10 @@ def compute_curvatures(dem: np.ndarray, c: float) -> tuple[np.ndarray, np.ndarra
     s = -np.gradient(dcol, c, axis=0)          # d²Z/(dE·dN)
 
     grad2 = p**2 + q**2
-    valid = grad2 > 1e-8
+    # Threshold at ~0.5° slope: below this, grad2^1.5 is so tiny (~1e-11) that
+    # even microscopic numerators blow up into extreme planform curvature values.
+    # Profile avoids this because its denominator has an extra (1+grad2) damping term.
+    valid = grad2 > np.tan(np.radians(0.5)) ** 2  # ≈ 7.6e-5
 
     prof_num = p**2 * r + 2 * p * q * s + q**2 * t
     prof_den = np.where(valid, grad2 * (1 + grad2) ** 1.5, 1.0)
@@ -162,6 +175,23 @@ def compute_flow_and_twi(
     return acc_arr, twi
 
 
+def compute_dist_drainage(
+    flow_acc: np.ndarray, nodata_mask: np.ndarray
+) -> np.ndarray:
+    """
+    Euclidean distance (metres) to the nearest drainage cell.
+    Drainage = flow accumulation >= 1000 upstream cells (captures streams/rivers at 30 m).
+    Nodata cells are excluded from both the source network and the output.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    drainage = (flow_acc >= 1000) & ~nodata_mask
+    # EDT: sampling=TARGET_RES converts pixel distance → metres
+    dist = distance_transform_edt(~drainage, sampling=TARGET_RES).astype(np.float32)
+    dist[nodata_mask] = NODATA
+    return dist
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -171,12 +201,16 @@ def main() -> None:
 
     print("Reprojecting DEM → EPSG:32633 at 30 m …")
     dem, profile = reproject_dem()
+
+    print("Building Campania boundary mask …")
+    outside = campania_mask(profile)
+    dem[outside] = NODATA
     save_raster("dem", dem, profile)
 
     # Working array: NODATA → NaN so numpy propagates correctly at edges
     dem_f = dem.astype(np.float64)
     dem_f[dem == NODATA] = np.nan
-    nodata_mask = np.isnan(dem_f)
+    nodata_mask = np.isnan(dem_f)  # includes both DEM nodata and outside-Campania
 
     print("Computing slope and aspect …")
     slope, aspect, slope_rad = compute_slope_aspect(dem_f, TARGET_RES)
@@ -187,20 +221,37 @@ def main() -> None:
     print("Computing flow accumulation and TWI (pysheds D8) …")
     flow_acc, twi = compute_flow_and_twi(dem, profile, slope_rad)
 
+    print("Computing distance to drainage network (threshold = 1000 cells) …")
+    dist_drainage = compute_dist_drainage(flow_acc, nodata_mask)
+
+    # Curvature uses two rounds of np.gradient so NaN propagates 2 cells outward
+    # from every boundary NaN cell; dilate the mask to suppress those edge artifacts.
+    curv_mask = binary_dilation(nodata_mask, iterations=2)
+
     # Stamp nodata mask onto all outputs
-    for arr in (slope, aspect, profile_curv, planform_curv, flow_acc, twi):
+    for arr in (slope, aspect, flow_acc, twi):
         arr[nodata_mask] = NODATA
+    for arr in (profile_curv, planform_curv):
+        arr[curv_mask] = NODATA
 
     print("Saving rasters …")
     for name, arr in [
-        ("slope",             slope),
-        ("aspect",            aspect),
-        ("profile_curvature", profile_curv),
-        ("planform_curvature",planform_curv),
-        ("flow_accumulation", flow_acc),
-        ("twi",               twi),
+        ("slope",              slope),
+        ("aspect",             aspect),
+        ("profile_curvature",  profile_curv),
+        ("planform_curvature", planform_curv),
+        ("flow_accumulation",  flow_acc),
+        ("twi",                twi),
     ]:
         save_raster(name, arr, profile)
+
+    # dist_drainage goes with the other feature rasters, not terrain intermediates
+    rasters_dir = Path("outputs/rasters")
+    rasters_dir.mkdir(parents=True, exist_ok=True)
+    p = {**profile, "dtype": str(dist_drainage.dtype)}
+    with rasterio.open(rasters_dir / "dist_drainage.tif", "w", **p) as dst:
+        dst.write(dist_drainage, 1)
+    print(f"  saved {rasters_dir / 'dist_drainage.tif'}")
 
     print("Done.")
 
