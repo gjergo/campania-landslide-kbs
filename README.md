@@ -1,32 +1,66 @@
-# ischia-landslide-kbs
+# campania-landslide-kbs
 
-ICon course project. KBS for landslide susceptibility in Campania, Italy.
+ICon course project. Knowledge-based system for landslide susceptibility mapping in Campania, Italy.
+Combines a Prolog rule engine with supervised ML classifiers (Logistic Regression, Random Forest, SVM).
+The key experiment is whether adding a `kb_susceptibility` feature derived from Prolog rules improves model AUC-ROC and F1.
 
-## Data locations
-data/ispra-landslide/     → IFFI polygons (ground truth)
-data/geological-map/geology_campania_classified.geojson → litho classes
-data/copernicus-dem-30/   → GeoTIFF DEM (drives grid)
-data/corine-land-cover/   → CORINE .gpkg
-data/era5rainfall/        → NetCDF files per year (still downloading)
-data/cft-landslides/      → earthquake-triggered slides
+All processing uses EPSG:32633 (UTM 33N) at 30m resolution, anchored to the Copernicus DEM grid.
 
-### data sources:
+## Pipeline
 
-- (ispra-landslide) National mosaic 2024 of landslide hazard: [https://idrogeo.isprambiente.it/opendata/wms/Mosaicatura_ISPRA_2024_pericolosita_frana_PAI.zip] (gpkg)
-- (ispra-landslide) Campania, Frane IFFI poligonali: [https://idrogeo.isprambiente.it/opendata/wms/Mosaicatura_ISPRA_2024_pericolosita_frana_PAI.zip] (gpkg)
-- (ispra-landslide) Campania, Landslide events: [https://idrogeo.isprambiente.it/opendata/eventi/eventi_campania_opendata.gpkg] (gpkg)
-- (copernicus-dem-30) Copernicus GLO-30 Digital Elevation Model: [https://portal.opentopography.org/raster?opentopoID=OTSDEM.032021.4326.3] (GeoTIFF)
-- (corine-land-cover) CORINE Land Cover 2018: [https://land.copernicus.eu/en/products/corine-land-cover/clc2018#download] (gpkg) 
-- (cfti-landslides) CTFIlandslides: [https://data.ingv.it/dataset/964] (GeoJSON, .shp)
+Run steps in order with `uv run src/pipeline/<script>.py`:
 
-other can be downloaded via scripts/
+| Step | Script | What it does |
+|------|--------|--------------|
+| 01 | `01_terrain.py` | DEM → slope, aspect, curvature, TWI, flow accumulation |
+| 02 | `02_rasterize.py` | Litho classes, CORINE land cover, IFFI landslide polygons → rasters |
+| 02b | `02b_rasterize_roads.py` | OSM roads → distance raster |
+| 03 | `03_era5.py` | ERA5 NetCDF → max 1-day, max 3-day, mean annual precip rasters |
+| 04 | `04_sample.py` | Stack all rasters → sample → `outputs/features/feature_matrix.parquet` |
+| 05 | `05_kb.py` | Prolog rules → append `kb_susceptibility` column to feature matrix |
 
-### Dem rasters:
+Then train and evaluate:
 
-- dem.tif — the reprojected DEM in EPSG:32633. This is the reference grid everything else aligns to. Not used directly as a feature (elevation alone is a weak predictor) but it's the base.
-- slope.tif — slope angle in degrees at each pixel. The single most important landslide predictor. Steep slopes fail, flat slopes don't.
-- aspect.tif — the direction a slope faces (north, south, east, west) in degrees. Affects moisture retention and vegetation — north-facing slopes in the northern hemisphere stay wetter, which matters for failure.
-- profile_curvature.tif — curvature measured along the direction of steepest descent. Positive values = slope is accelerating downhill (convex, erosion-prone). Negative = decelerating (concave, deposition zone). Affects how water and debris flow.
-- planform_curvature.tif — curvature measured perpendicular to slope direction. Negative values = converging flow (hollows, where water concentrates). Positive = diverging flow (ridges). Hollows are where debris flows initiate.
-- flow_accumulation.tif — how many upslope pixels drain through each pixel. High values = valley bottoms and drainage channels. Used to compute TWI and to identify drainage proximity.
-- twi.tif — Topographic Wetness Index. Combines slope and flow accumulation into a single measure of how wet a pixel tends to be. Formula is ln(flow_accumulation / tan(slope)). High TWI = wet, flat, drainage-collecting areas. One of the strongest predictors of shallow landslide initiation.
+```bash
+uv run src/models/train.py
+```
+
+## Data
+
+Download data into `data/` before running the pipeline. Most sources are one-time downloads (scripts in `scripts/` have already been run).
+
+| Folder | Source | How to get it |
+|--------|--------|---------------|
+| `data/ispra-landslide/` | IFFI landslide polygons + events + P1-P4 hazard mosaic | Download from [ISPRA IdroGEO opendata](https://idrogeo.isprambiente.it/app/page/open-data) |
+| `data/copernicus-dem-30/` | Copernicus GLO-30 DEM | [OpenTopography](https://portal.opentopography.org/raster?opentopoID=OTSDEM.032021.4326.3) |
+| `data/corine-land-cover/` | CORINE Land Cover 2018 | [Copernicus Land Service](https://land.copernicus.eu/en/products/corine-land-cover/clc2018#download) |
+| `data/geological-map/` | Litho polygons (pre-classified) | Already in repo as `geology_campania_classified.geojson` |
+| `data/cfti-landslides/` | Earthquake-triggered slides | [INGV CFTI dataset](https://data.ingv.it/dataset/964) |
+| `data/osm-roads/` | OSM road network (sud-italy) | See below |
+| `data/era5/` | ERA5 daily precipitation 1990–2023 | `uv run scripts/download_era5.py` (CDS API key required) |
+
+**OSM roads:**
+```bash
+curl -L -o data/osm-roads/sud-italy-free.shp.zip \
+  https://download.geofabrik.de/europe/italy/sud-latest-free.shp.zip && \
+  unzip data/osm-roads/sud-italy-free.shp.zip -d data/osm-roads/
+```
+
+## Project structure
+
+```
+src/pipeline/   → numbered pipeline steps
+src/models/     → training and evaluation
+src/utils/      → shared helpers (raster ops, reprojection)
+scripts/        → one-off download scripts (already run, don't re-run)
+data/           → raw inputs, read-only
+outputs/        → all generated files (rasters, feature matrix, figures)
+```
+
+## Dependencies
+
+```bash
+uv sync
+```
+
+Requires Python ≥ 3.11. Key packages: `geopandas`, `rasterio`, `richdem`, `pysheds`, `xarray`, `scikit-learn`, `pyswip`.
