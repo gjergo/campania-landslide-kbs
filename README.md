@@ -34,7 +34,7 @@ Download data into `data/` before running the pipeline. Most sources are one-tim
 | `data/ispra-landslide/` | IFFI landslide polygons + events + P1-P4 hazard mosaic | Download from [ISPRA IdroGEO opendata](https://idrogeo.isprambiente.it/app/page/open-data) |
 | `data/copernicus-dem-30/` | Copernicus GLO-30 DEM | [OpenTopography](https://portal.opentopography.org/raster?opentopoID=OTSDEM.032021.4326.3) |
 | `data/corine-land-cover/` | CORINE Land Cover 2018 | [Copernicus Land Service](https://land.copernicus.eu/en/products/corine-land-cover/clc2018#download) |
-| `data/geological-map/` | Litho polygons (pre-classified) | Already in repo as `geology_campania_classified.geojson` |
+| `data/geological-map/` | Litho polygons | `uv run scripts/download_geological_map.py` |
 | `data/cfti-landslides/` | Earthquake-triggered slides | [INGV CFTI dataset](https://data.ingv.it/dataset/964) |
 | `data/osm-roads/` | OSM road network (sud-italy) | See below |
 | `data/era5/` | ERA5 daily precipitation 1990–2023 | `uv run scripts/download_era5.py` (CDS API key required) |
@@ -45,6 +45,13 @@ curl -L -o data/osm-roads/sud-italy-free.shp.zip \
   https://download.geofabrik.de/europe/italy/sud-latest-free.shp.zip && \
   unzip data/osm-roads/sud-italy-free.shp.zip -d data/osm-roads/
 ```
+
+**Lithology polygons**
+
+after downloading via the script classify them via
+
+`uv run scripts/classify_geological_map.py`
+
 
 ## Project structure
 
@@ -64,3 +71,7 @@ uv sync
 ```
 
 Requires Python ≥ 3.11. Key packages: `geopandas`, `rasterio`, `richdem`, `pysheds`, `xarray`, `scikit-learn`, `pyswip`.
+
+## notebooks
+
+in notebooks/ there are notebook-style blocks to run some checks on the lithology data and the feature matrix once it is created. it is meant as a quick verification tool. 
